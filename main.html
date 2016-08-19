@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>speech-nl-demo</title>
+  <meta charset="utf-8"> 
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='nprogress.min.css') }}">
+  <script src="{{ url_for('static', filename='jquery.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='mustache.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='MediaStreamRecorder.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='bootstrap.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='nprogress.min.js') }}"></script>
+  <script>
+  $(document).ready(function() {
+
+    $(this).ajaxStart(function() { NProgress.start() });
+    $(this).ajaxStop(function() { NProgress.done() });
+
+    var recordClickCounter = 0;
+    var stream;
+    var recorder;
+
+    // start/stop recording every other time the button is clicked
+    $("#record").click(function() {
+      if(recordClickCounter++ % 2 == 0) {
+
+        // user started recording, restyle into 'stop' button
+        $(this).text("Stop recording");
+        $(this).addClass("btn-danger");
+
+        // set up audio recorder and connect to backend service
+        navigator.getUserMedia({audio: true}, 
+
+          function(innerStream) {
+            stream = innerStream;
+            recorder = new MediaStreamRecorder(stream);
+  
+            // todo: probably room for optimizations (ideally convert to flac)
+            recorder.mimeType = "audio/wav";
+            recorder.audioChannels = 1;
+  
+            // this event is fired whenever time's up or stop() is called
+            recorder.ondataavailable = function(audio) {
+  
+              // wrap audio blob in form data in order to post it to backend
+              var data = new FormData();
+              data.append("file", audio);
+              
+              // post audio blob to backend
+              $.ajax({
+                url: "speech",
+                type: "POST",
+                data: data,
+                contentType: false,
+                processData: false,
+                success: function(resp) {
+                  // todo: implement proper error handling
+                  var transcript;
+                  try {
+                    transcript = resp.responses[0].results[0].alternatives[0].transcript;
+                  } catch(error) {
+                    transcript = "\"\"";
+                  }
+
+                  // display transcript
+                  $("#output").prepend(Mustache.render(
+                    $("#snippet-tmpl").html(),
+                    { snippet: transcript }
+                  ));
+
+                  // create modal showing raw json response
+                  $("#output blockquote:first div:first").append(Mustache.render(
+                    $("#modal-tmpl").html(),
+                    { buttonTitle: "speech json",
+                      buttonClass: "btn-success",
+                      modalId: "speech-modal-" + $("#output blockquote").length,
+                      modalTitle: "Cloud Speech API raw response",
+                      json: JSON.stringify(resp, null, 2) }
+                  ));
+
+                  // enable analyze button now when there's something to analyze
+                  $("#analyze").prop("disabled", false);
+
+                }
+              });
+            };
+
+            // start the actual recording, run for 60 secs max
+            recorder.start(60000);
+          },
+
+          function(e) {
+            console.error("Couldn't connect to user's audio input", e);
+          }
+
+        );
+
+      } else {
+
+        // user stopped recording, restyle into 'start' button
+        $(this).text("Record audio");
+        $(this).removeClass("btn-danger");
+
+        // kill recording and stop hogging user's microphone
+        recorder.stop();
+        stream.stop();
+
+      }
+
+    });
+
+    $("#analyze").click(function() {
+      // grab last available text snippet
+      var string = $("#output blockquote:first p").text();
+
+      $.post("language", {string: string}, function(resp) {
+        // disable analyze button to prevent analysis on the analysis
+        $("#analyze").prop("disabled", true);
+
+        // build a temporary helper structure to help annotate text snippet
+        var replacements = [];
+        for (let entity of resp.entities) {
+          for (let mention of entity.mentions) {
+            replacements.push({
+              offset: mention.text.beginOffset,
+              content: mention.text.content,
+              type: entity.type
+            });
+          }
+        }
+
+        // sort temporary structure as the loop below require ascending order
+        // todo: can we assume NL API outputs entities in the order they were found?
+        replacements = replacements.sort(function(a, b) { return a.offset > b.offset; })
+
+        // add <mark> tags to annotate snippet according to temp structure
+        var acc_diff = 0;
+        for (let repl of replacements) {
+          new_string = string.substr(0, repl.offset + acc_diff) + 
+                       Mustache.render($("#markup-tmpl").html(), repl) + 
+                       string.substr(repl.offset + repl.content.length + acc_diff);
+          acc_diff = acc_diff + (new_string.length - string.length);
+          string = new_string;
+        }
+
+        // replace the original text with the new annotated version
+        $("#output blockquote:first p").html(string);
+
+        // create modal showing raw json response
+        $("#output blockquote:first div:first").append(Mustache.render(
+          $("#modal-tmpl").html(),
+          { buttonTitle: "language json",
+            buttonClass: "btn-success",
+            modalId: "language-modal-" + $("#output blockquote").length,
+            modalTitle: "Cloud Natural Language API raw response",
+            json: JSON.stringify(resp, null, 2) }
+        ));
+
+        // print sentiment analysis
+        $("#output blockquote:first div:last").append(
+          Mustache.render($("#sentiment-tmpl").html(), resp.documentSentiment)
+        );
+
+        // activate jquery plugin for showing annotation tooltips
+        $("[data-toggle='tooltip']").tooltip();
+
+      });
+
+    });
+
+  });
+  </script>
+
+  <script id="snippet-tmpl" type="x-tmpl-mustache">
+    <blockquote>
+      <div class="pull-right"></div>
+      <p>{{ '{{ snippet }}' }}</p>
+      <div class="small"></div>
+    </blockquote>
+  </script>
+
+  <script id="modal-tmpl" type="x-tmpl-mustache">
+    <button class="btn btn-xs {{ '{{ buttonClass }}' }}" data-toggle="modal" data-target="#{{ '{{ modalId }}' }}">
+      {{ '{{ buttonTitle }}' }}
+    </button>
+    <div class="modal fade" id="{{ '{{ modalId }}' }}" role="dialog" data-keyboard="true" tabindex="-1">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <button type="button" class="close" data-dismiss="modal">&times;</button>
+            <h4 class="modal-title">{{ '{{ modalTitle }}' }}</h4>
+          </div>
+          <div class="modal-body">
+            <pre>{{ '{{ json }}' }}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </script>
+
+  <script id="markup-tmpl" type="x-tmpl-mustache">
+    <mark data-toggle="tooltip" title="{{ '{{ type }}' }}">{{ '{{ content }}' }}</mark>
+  </script>
+
+  <script id="sentiment-tmpl" type="x-tmpl-mustache">
+    Polarity <span class="badge">{{ '{{ polarity }}' }}</span>
+    Magnitude <span class="badge">{{ '{{ magnitude }}' }}</span>
+  </script>
+
+</head>
+
+<body>
+  <div class="container-fluid">
+    <h1>speech-nl-demo.appspot.com</h1>
+    <p>
+    This is a demo of the <a href="https://cloud.google.com/speech/">Cloud Speech API</a>
+    and the <a href="https://cloud.google.com/natural-language/">Natural Language API</a>.
+    Record speech, do speech-to-text conversion and optionally run natural language analysis
+    (sentiment, entity recognition) on the last recorded audio snippet. N.B. the demo is
+    currently hard-coded to assume American English - other languages and accents will not work
+    equally well. This is a limitation of this demo, not the Speech API.
+    </p>
+    <p>
+      <button id="record" class="btn btn-lg btn-primary">Record audio</button>
+      <button id="analyze" class="btn btn-lg btn-primary" disabled>Analyze text</button>
+    </p>
+    <div id="output"></div>
+  </div>
+</body>
+
+</html>

@@ -1,0 +1,17 @@
+runtime: python27
+threadsafe: true
+
+handlers:
+- url: .*
+  script: main.app
+  secure: always
+
+skip_files:
+- ^(.*/)?#.*#$
+- ^(.*/)?.*~$
+- ^(.*/)?.*\.py[co]$
+- ^(.*/)?.*/RCS/.*$
+- ^(.*/)?\..*$
+- ^(.*/)?\.json$
+- bin
+- include

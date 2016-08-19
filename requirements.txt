@@ -1,0 +1,4 @@
+flask
+google-api-python-client
+webapp2
+webob
