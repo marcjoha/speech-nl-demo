@@ -21,10 +21,10 @@ def main():
 @app.route("/", methods=['POST'])
 def upload():
   file = request.files['file']
-  if file:
+  if file and file.content_type == "text/plain":
     string = file.read()
-  response = language_api(string)
-  return jsonify(response)
+    response = language_api(string)
+    return jsonify(response)
 
 @app.route("/speech", methods=["POST"])
 def speech():
