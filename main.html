@@ -58,7 +58,7 @@
                   // todo: implement proper error handling
                   var transcript;
                   try {
-                    transcript = resp.responses[0].results[0].alternatives[0].transcript;
+                    transcript = resp.results[0].alternatives[0].transcript;
                   } catch(error) {
                     transcript = "\"\"";
                   }
