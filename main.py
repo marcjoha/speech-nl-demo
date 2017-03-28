@@ -66,3 +66,4 @@ def language_api(string):
 
   req = get_service("language", "v1beta1").documents().annotateText(body=payload)
   return req.execute()
+
